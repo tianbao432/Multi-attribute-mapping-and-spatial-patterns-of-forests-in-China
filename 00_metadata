@@ -1,1 +1,137 @@
+# National 30-m Forest Attribute Mapping across China
 
+## Overview
+
+This repository contains the custom Python and R scripts used to support the
+national-scale 30-m mapping and analysis of multiple forest attributes across
+China. The workflow covers data preparation, remote-sensing feature engineering,
+model development, national wall-to-wall prediction, validation, uncertainty
+analysis, driver analysis, and manuscript figure generation.
+
+The repository was prepared to support manuscript peer review and to document
+the computational workflow used in the study.
+
+## Repository Structure
+
+The main folders are organized by analysis stage:
+
+- `metadata/` — metadata utilities, including standardized climate-zone names
+  and abbreviations.
+- `data_preparation/` — raster clipping and conversion, predictor extraction,
+  bioclimatic processing, external-product cropping, and source-data preparation.
+- `feature_engineering/` — vegetation indices, texture metrics, climate-zone
+  assignments, and stacked predictor rasters.
+- `modeling/` — cross-validation fold generation and XGBoost model training.
+- `mapping/` — national-scale prediction, GPU-based wall-to-wall mapping,
+  mosaicking, visualization, and uncertainty mapping.
+- `validation/` — Python and R scripts for statistical evaluation and
+  observed-versus-predicted validation.
+- `additional_analysis/` — climate-zone statistics, external product comparison,
+  and additional summaries.
+- `driver_analysis/` — driver-data preparation, VIF analysis, driver modeling,
+  and performance evaluation.
+- `figures/` — manuscript figures, including validation, climate-zone summaries,
+  feature importance, SHAP interpretation, and product comparison.
+- `Google earth engine/` — Google Earth Engine scripts used for remote-sensing
+  preprocessing and related data preparation.
+
+## General Workflow
+
+1. **Data preparation**  
+   Prepare forest inventory data and remote-sensing/environmental predictor
+   layers, crop or align raster products, and extract predictor values at
+   sample locations.
+
+2. **Feature engineering**  
+   Derive vegetation indices, image-texture metrics, climate-zone information,
+   and analysis-ready raster stacks.
+
+3. **Model development**  
+   Create cross-validation folds and train predictive models for forest attributes.
+
+4. **National mapping**  
+   Apply trained models to wall-to-wall predictor data, generate national 30-m
+   forest attribute maps, mosaic prediction tiles, and calculate mapping uncertainty.
+
+5. **Validation**  
+   Evaluate model performance using statistical metrics and
+   observed-versus-predicted comparisons.
+
+6. **Additional analyses**  
+   Summarize forest attributes by climate zone and compare mapped products with
+   external datasets.
+
+7. **Driver analysis**  
+   Examine relationships between forest attributes and environmental or climatic
+   drivers.
+
+8. **Figure generation**  
+   Produce figures for model evaluation, spatial analysis, product comparison,
+   and driver interpretation.
+
+## Software Environment
+
+The workflow uses both Python and R. Environment specifications are provided in:
+
+- `environment.example.yml`
+- `requirements.txt`
+
+The Python workflow includes packages such as NumPy, pandas, Rasterio, GDAL,
+GeoPandas, scikit-learn, XGBoost, Optuna, SHAP, Matplotlib, Cartopy, SciPy,
+and related geospatial/scientific libraries.
+
+Some scripts use GPU acceleration, so a compatible CUDA environment may be
+required for full national-scale execution.
+
+## Reproducibility
+
+The scripts document the analysis logic used in the study. Full national-scale
+reproduction requires the original input datasets, sufficient storage and memory,
+and, for some steps, GPU computing resources.
+
+Before running the scripts, users may need to:
+
+- update local file paths;
+- provide the required forest inventory and remote-sensing datasets;
+- reconstruct the Python/R software environment;
+- ensure that raster projections, resolutions, extents, and naming conventions
+  match those expected by the scripts.
+
+## Data Availability
+
+Large raster predictors, raw remote-sensing data, trained models, logs,
+restricted forest inventory records, and restricted plot coordinates are not
+included in this repository.
+
+The repository therefore focuses on providing the analysis code and computational
+workflow rather than redistributing large or restricted source datasets.
+
+## Code Availability
+
+The custom Python and R scripts used for data preparation, model development,
+national-scale mapping, validation, driver analysis, and figure generation are
+provided in this repository for peer review.
+
+The final archived repository URL and DOI will be added before publication.
+
+## Recommended Review Sequence
+
+1. Read this `README.md`.
+2. Review the workflow documentation.
+3. Review the code index.
+4. Inspect the scripts relevant to the manuscript section of interest.
+5. Reconstruct the software environment using `requirements.txt` or
+   `environment.example.yml`.
+6. Adapt local paths and provide the required datasets before executing
+   individual scripts.
+
+## License
+
+No software license has been assigned automatically. Copyright and institutional
+requirements should be confirmed before the repository is made public. An approved
+`LICENSE` file should be added before formal public release.
+
+## Citation
+
+Citation information and the permanent code archive identifier will be added
+after acceptance and before final publication.
