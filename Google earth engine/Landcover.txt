@@ -1,0 +1,329 @@
+// =============================================================================
+// China 30 m Forest Consensus Mask Export Script
+// Version: 5-dataset consensus, no Dynamic World, no GLAD, no Hansen, no visualization
+// Optimized version: 20 x 20 tiles, skip non-China tiles before export
+// Target: 10-30 m resolution | 2020-2021 baseline | Native GEE / Community assets
+//
+// Datasets:
+// 1. ESA WorldCover 2021
+// 2. ALOS/PALSAR FNF4 2020
+// 3. JRC Global Forest Cover 2020 V3
+// 4. CATCD China Annual Tree Cover Dataset 2021
+// 5. GLC_FCS30D 2021
+//
+// Consensus rule:
+// A pixel is classified as forest only when at least 3 of the 5 datasets vote forest.
+//
+// Output:
+// forest = 1
+// non-forest = 0
+// outside China = 0
+// =============================================================================
+
+
+// =============================================================================
+// 1. Study area
+// =============================================================================
+
+var roi = ee.FeatureCollection('projects/ee-864741436/assets/CHINA');
+var roiGeom = roi.geometry();
+
+// Raster mask for China boundary.
+// China = 1, outside China = masked.
+var chinaMask = ee.Image.constant(1)
+  .clipToCollection(roi)
+  .selfMask();
+
+
+// =============================================================================
+// 2. Helper function
+// Forest = 1, non-forest = 0.
+// =============================================================================
+
+function standardizeForestMask(image) {
+  return ee.Image(image)
+    .rename('forest')
+    .toUint8()
+    .unmask(0);
+}
+
+
+// =============================================================================
+// 3. Dataset 1: ESA WorldCover 2021, 10 m
+// Forest-related classes:
+// 10 = Tree cover
+// 95 = Mangroves
+// =============================================================================
+
+var ESA21 = ee.ImageCollection('ESA/WorldCover/v200')
+  .filterDate('2021-01-01', '2022-01-01')
+  .first()
+  .select('Map');
+
+var Forests_ESA21 = ESA21
+  .eq(10)
+  .or(ESA21.eq(95));
+
+Forests_ESA21 = standardizeForestMask(Forests_ESA21);
+
+
+// =============================================================================
+// 4. Dataset 2: ALOS/PALSAR FNF4 2020, 25 m
+// Dense Forest class only:
+// fnf == 1,2
+// =============================================================================
+
+var PALSAR20 = ee.ImageCollection('JAXA/ALOS/PALSAR/YEARLY/FNF4')
+  .filterDate('2020-01-01', '2021-01-01')
+  .first()
+  .select('fnf');
+
+var Forests_PALSAR20 = PALSAR20.eq(1).or(PALSAR20.eq(2));
+
+Forests_PALSAR20 = standardizeForestMask(Forests_PALSAR20);
+
+
+// =============================================================================
+// 5. Dataset 3: EC JRC Global Forest Cover 2020 V3, 10 m
+// Forest class:
+// Map == 1
+// =============================================================================
+
+var Forests_JRC20 = ee.Image('JRC/GFC2020/V3')
+  .select('Map')
+  .eq(1);
+
+Forests_JRC20 = standardizeForestMask(Forests_JRC20);
+
+
+// =============================================================================
+// 6. Dataset 4: CATCD China Annual Tree Cover Dataset 2021, 30 m
+// Tree cover threshold:
+// tree cover >= 10%
+// Note: This is a private asset. Make sure your account has access.
+// =============================================================================
+
+var CATCD = ee.ImageCollection('projects/ee-caiyt33-catcd/assets/China_Annual_Tree_Cover_Dataset');
+
+var CATCD21 = CATCD
+  .filterDate('2021-01-01', '2022-01-01');
+
+print('CATCD 2021 image count:', CATCD21.size());
+
+var Forests_CATCD21 = CATCD21
+  .first()
+  .select(0)
+  .gte(10);
+
+Forests_CATCD21 = standardizeForestMask(Forests_CATCD21);
+
+
+// =============================================================================
+// 7. Dataset 5: GLC_FCS30D 2021, 30 m
+// GEE Community Catalog asset:
+// projects/sat-io/open-datasets/GLC-FCS30D/annual
+//
+// Annual bands:
+// b1  = 2000
+// b2  = 2001
+// ...
+// b22 = 2021
+//
+// Forest-related classes:
+// 51 = Open evergreen broadleaved forest
+// 52 = Closed evergreen broadleaved forest
+// 61 = Open deciduous broadleaved forest
+// 62 = Closed deciduous broadleaved forest
+// 71 = Open evergreen needle-leaved forest
+// 72 = Closed evergreen needle-leaved forest
+// 81 = Open deciduous needle-leaved forest
+// 82 = Closed deciduous needle-leaved forest
+// 91 = Open mixed leaf forest
+// 92 = Closed mixed leaf forest
+// 185 = Mangrove
+// =============================================================================
+
+var GLCFCS_annual = ee.ImageCollection('projects/sat-io/open-datasets/GLC-FCS30D/annual');
+
+var GLCFCS_2021 = GLCFCS_annual
+  .mosaic()
+  .select('b22');
+
+var forestClasses_GLCFCS = [
+  51, 52,
+  61, 62,
+  71, 72,
+  81, 82,
+  91, 92,
+  185
+];
+
+var Forests_GLCFCS21 = GLCFCS_2021
+  .remap(
+    forestClasses_GLCFCS,
+    ee.List.repeat(1, forestClasses_GLCFCS.length),
+    0
+  )
+  .rename('forest');
+
+Forests_GLCFCS21 = standardizeForestMask(Forests_GLCFCS21);
+
+
+// =============================================================================
+// 8. Five-dataset forest consensus
+// Rule:
+// A pixel is classified as forest only when at least 3 of the 5 datasets vote forest.
+// =============================================================================
+
+var forestLayers = [
+  Forests_ESA21,
+  Forests_PALSAR20,
+  Forests_JRC20,
+  Forests_CATCD21,
+  Forests_GLCFCS21
+];
+
+print('Number of forest layers:', forestLayers.length);
+
+var stack = ee.ImageCollection.fromImages(forestLayers);
+
+// Forest vote count.
+// Possible values: 0, 1, 2, 3, 4, 5.
+var forestVotes = stack
+  .sum()
+  .rename('forest_votes')
+  .toUint8();
+
+var MIN_FOREST_VOTES = 3;
+
+// Raw consensus.
+var consensusRaw = forestVotes
+  .gte(MIN_FOREST_VOTES)
+  .toUint8()
+  .rename('forest');
+
+// Apply China mask first.
+// Then unmask to 0 so exported GeoTIFF is always a valid 0/1 raster.
+var consensusBinary = consensusRaw
+  .updateMask(chinaMask)
+  .unmask(0)
+  .toUint8()
+  .rename('forest');
+
+
+// =============================================================================
+// 9. Tile settings
+// =============================================================================
+
+var lonMin = 73.0;
+var lonMax = 135.5;
+var latMin = 18.0;
+var latMax = 54.0;
+
+// 20 x 20 tiles.
+var numTilesX = 20;
+var numTilesY = 20;
+
+var dx = (lonMax - lonMin) / numTilesX;
+var dy = (latMax - latMin) / numTilesY;
+
+// Small overlap to avoid edge gaps between exported tiles.
+var bufferDeg = 0.00027;
+
+print('Generating tile list on server...');
+
+
+// =============================================================================
+// 10. Build server-side tile FeatureCollection
+// Non-China tiles are removed before generating export tasks.
+// =============================================================================
+
+var tileList = ee.List.sequence(0, numTilesX - 1).map(function(i) {
+  i = ee.Number(i);
+
+  return ee.List.sequence(0, numTilesY - 1).map(function(j) {
+    j = ee.Number(j);
+
+    var x0 = ee.Number(lonMin).add(i.multiply(dx));
+    var y0 = ee.Number(latMin).add(j.multiply(dy));
+    var x1 = x0.add(dx);
+    var y1 = y0.add(dy);
+
+    var tileGeom = ee.Geometry.Rectangle(
+      [
+        x0.subtract(bufferDeg),
+        y0.subtract(bufferDeg),
+        x1.add(bufferDeg),
+        y1.add(bufferDeg)
+      ],
+      'EPSG:4326',
+      false
+    );
+
+    // Keep i and j as numeric properties.
+    // The final task name will be built on the client side to avoid decimals.
+    return ee.Feature(tileGeom, {
+      'i': i,
+      'j': j,
+      'x0': x0,
+      'y0': y0,
+      'x1': x1,
+      'y1': y1
+    });
+  });
+}).flatten();
+
+var allTiles = ee.FeatureCollection(tileList);
+
+// Keep only tiles intersecting the China boundary.
+var chinaTiles = allTiles.filterBounds(roiGeom);
+
+print('Candidate tiles:', allTiles.size());
+print('Tiles intersecting China:', chinaTiles.size());
+
+
+// =============================================================================
+// 11. Export only China-intersecting tiles
+// Note:
+// Export tasks must be created on the client side.
+// evaluate() is used once to get the valid tile list,
+// instead of using getInfo() repeatedly inside a loop.
+// =============================================================================
+
+chinaTiles.evaluate(function(tileCollection) {
+
+  var features = tileCollection.features;
+  var taskCount = 0;
+
+  features.forEach(function(feature) {
+
+    var props = feature.properties;
+
+    // Convert i and j to integer strings.
+    // This prevents invalid task names such as Tile_x5.0_y5.0.
+    var iInt = Math.round(Number(props.i));
+    var jInt = Math.round(Number(props.j));
+
+    var tileName = 'Tile_x' + iInt + '_y' + jInt;
+
+    var tileGeom = ee.Geometry(feature.geometry);
+
+    taskCount++;
+
+    Export.image.toDrive({
+      image: consensusBinary,
+      description: 'China_Forest5_30m_' + tileName,
+      folder: 'GEE_China_Forest5_GLCFCS_20x20',
+      fileNamePrefix: 'China_Forest5_30m_' + tileName,
+      region: tileGeom,
+      scale: 30,
+      crs: 'EPSG:4326',
+      maxPixels: 1e13,
+      fileFormat: 'GeoTIFF',
+      skipEmptyTiles: false
+    });
+  });
+
+  print('Export tasks generated:', taskCount);
+  print('Please open the Tasks tab and run the export tasks manually.');
+});

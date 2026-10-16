@@ -1,0 +1,111 @@
+
+var roi = ee.FeatureCollection('projects/ee-864741436/assets/CHINA');
+var roiBounds = roi.geometry().bounds();
+var simpleRoi = roi.geometry().simplify(1000); 
+
+/**
+ * 'Spring', 'Summer', 'Autumn', 'Winter'
+ */
+var season = 'Summer'; 
+
+var seasonConfigs = {
+  'Spring': { months: [3, 5], label: 'Spring' },
+  'Summer': { months: [6, 8], label: 'Summer' },
+  'Autumn': { months: [9, 11], label: 'Autumn' },
+  'Winter': { months: [12, 2], label: 'Winter' } 
+};
+
+var config = seasonConfigs[season];
+
+var monthFilter;
+if (season === 'Winter') {
+  monthFilter = ee.Filter.or(
+    ee.Filter.calendarRange(12, 12, 'month'),
+    ee.Filter.calendarRange(1, 2, 'month')
+  );
+} else {
+  monthFilter = ee.Filter.calendarRange(config.months[0], config.months[1], 'month');
+}
+
+var dataset = ee.ImageCollection('COPERNICUS/S1_GRD')
+  .filterDate('2018-01-01', '2024-01-01') 
+  .filterBounds(roiBounds) 
+  .filter(ee.Filter.eq('instrumentMode', 'IW'))
+  .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV')) 
+  .filter(monthFilter);
+
+var median = dataset.select('VV').median();
+
+var imageToExport = median
+  .setDefaultProjection({
+    crs: 'EPSG:4326',
+    scale: 10 
+  })
+  .resample('bilinear')
+  .clip(simpleRoi);
+
+
+function createGrid(xmin, ymin, xmax, ymax, dx, dy) {
+  var polys = [];
+  for (var x = xmin; x < xmax; x += dx) {
+    for (var y = ymin; y < ymax; y += dy) {
+      var x2 = Math.min(x + dx, xmax);
+      var y2 = Math.min(y + dy, ymax);
+      var rect = ee.Geometry.Rectangle([x, y, x2, y2], 'EPSG:4326', false);
+      polys.push(ee.Feature(rect, {
+        'tid': 'X' + Math.floor(x) + 'Y' + Math.floor(y)
+      }));
+    }
+  }
+  return ee.FeatureCollection(polys);
+}
+
+
+var initialGrid = createGrid(73, 18, 136, 54, 6, 4);
+
+var spatialGrid = initialGrid.filterBounds(simpleRoi);
+
+
+var dataMask = imageToExport.mask();
+
+var validGrid = dataMask.reduceRegions({
+  collection: spatialGrid,
+  reducer: ee.Reducer.max(),
+  scale: 5000,               
+  crs: 'EPSG:4326',
+  tileScale: 4
+})
+.filter(ee.Filter.notNull(['max']))
+.filter(ee.Filter.gt('max', 0)); 
+
+
+validGrid.evaluate(function(fCollection) {
+  if (!fCollection) return;
+  var features = fCollection.features;
+  
+  features.forEach(function(f) {
+    var geom = ee.Geometry(f.geometry);
+    var tileId = f.properties.tid;
+    
+    Export.image.toDrive({
+      image: imageToExport,
+      description: 'S1_VV_' + config.label + '_' + tileId,
+      folder: 'Sentinel1_VV_' + config.label,
+      fileNamePrefix: 'S1_VV_' + config.label + '_' + tileId,
+      region: geom,
+      scale: 30, 
+      crs: 'EPSG:4326',
+      maxPixels: 1e13,
+      skipEmptyTiles: true 
+    });
+  });
+  
+  print('✅ S1 ' + config.label + ' 导出任务已就绪！共生成有效任务: ' + features.length + ' 个。');
+  print('请在 Tasks 栏点击 Run。');
+});
+
+
+Map.centerObject(roiBounds, 4);
+Map.addLayer(simpleRoi, {color: 'blue'}, 'ROI_Outline');
+Map.addLayer(validGrid.style({color: 'cyan', fillColor: '00000000'}), {}, 'Valid_Export_Grid');
+Map.addLayer(imageToExport, {min: -25, max: 0}, 'S1_VV_' + config.label + '_Preview');
